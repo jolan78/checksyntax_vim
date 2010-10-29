@@ -23,6 +23,8 @@ augroup CheckSyntax
     autocmd!
     if g:checksyntax_auto
         autocmd CheckSyntax BufWritePost * call checksyntax#Check(0)
+        autocmd CheckSyntax InsertLeave,CursorHold * call checksyntax#LiveCheck(0)
+        autocmd CheckSyntax BufWinEnter,TabEnter,WinEnter * call checksyntax#LiveCheck(1)
     endif
 augroup END
 

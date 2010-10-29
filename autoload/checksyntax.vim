@@ -26,6 +26,7 @@ if !exists('g:checksyntax')
     " 
     " Optional:
     "   auto ... Run automatically when saving a file.
+    "   live ... Run automatically when the buffer changed
     "   efm  ... An 'errorformat' string.
     "   okrx ... A |regexp| matching the command output if no error were 
     "            found.
@@ -43,7 +44,8 @@ endif
 if !exists('g:checksyntax.php')
     let g:checksyntax['php'] = {
                 \ 'auto': 1,
-                \ 'cmd': 'php -l',
+                \ 'live': 1,
+                \ 'cmd': 'php -l -f',
                 \ 'efm': '%*[^:]: %m in %f on line %l',
                 \ 'okrx': 'No syntax errors detected in ',
                 \ 'alt': 'phpp'
@@ -163,6 +165,8 @@ endif
 """ tidy (HTML)
 if !exists('g:checksyntax.html')
     let g:checksyntax['html'] = {
+                \ 'auto': 1,
+                \ 'live': 1,
                 \ 'cmd': 'tidy -eq',
                 \ 'efm': 'line %l column %c - %m'
                 \ }
@@ -191,6 +195,9 @@ if !exists('*CheckSyntaxSucceed')
             echo
             echo 'Syntax ok.'
         endif
+        if exists("*QuickfixsignsUpdate")
+          call QuickfixsignsUpdate()
+        endif
     endf
 endif
 
@@ -198,7 +205,32 @@ endif
 if !exists('*CheckSyntaxFail')
     " :nodoc:
     function! CheckSyntaxFail(manually)
-        copen
+        
+    let totalerrors=0
+    "let openqf=0
+    for error in getqflist()
+      if error['valid'] > 0
+        "if s:getOption('openfornotice') || error['text']  !~ '\cnotice'
+        "if error['text']  !~ '\cnotice'
+        "  let openqf=1
+        "endif
+        let totalerrors+= 1
+      endif
+    endfor
+        let winnum = winnr() " get current window number
+        let height=min([totalerrors,10])
+        if height == 0
+          cw
+        else
+          "execute "cw ".height 
+          execute "copen ".height 
+          execute height."wincmd _"
+        endif
+        execute winnum . "wincmd w"
+        if exists("*QuickfixsignsUpdate")
+          call QuickfixsignsUpdate()
+        endif
+        "copen
     endf
 endif
 
@@ -206,7 +238,7 @@ endif
 function! s:Make(def)
     let bufnr = bufnr('%')
     let pos = getpos('.')
-    try
+"    try
         if has_key(a:def, 'compiler')
 
             if exists('g:current_compiler')
@@ -226,7 +258,6 @@ function! s:Make(def)
             endtry
 
         else
-
             let makeprg = &makeprg
             let shellpipe = &shellpipe
             let errorformat = &errorformat
@@ -240,7 +271,20 @@ function! s:Make(def)
                 if has_key(a:def, 'cmd')
                     let &l:makeprg = a:def.cmd
                     " TLogVAR &l:makeprg, &l:errorformat
-                    silent make %
+
+                    if has_key(a:def, 'live') && a:def.live
+                      "echo "live"
+                      if !exists('b:tmpfile') || !file_readable(b:tmpfile)
+                        call s:MakeTempFile()
+                      endif
+                      "echo a:def.cmd." /dev/stdin | sed 's/\\/dev\\/stdin/".escape(bufname("%"),'/')."/g' >".b:tmpfile
+                      let test= system(a:def.cmd." /dev/stdin  2>&1 | sed 's/\\/dev\\/stdin/".escape(bufname("%"),'/')."/g' >".b:tmpfile,s:SafeGetCode())
+                      execute "cg ".b:tmpfile
+                      "call s:ShowQuickFix()
+                    else
+                      "echo "making. ".&errorformat." / ".&makeprg
+                      silent! make %
+                    endif
                     return 1
                 elseif has_key(a:def, 'exec')
                     exec a:def.exec
@@ -259,15 +303,15 @@ function! s:Make(def)
             endtry
 
         endif
-    catch
-        echohl Error
-        echom v:errmsg
-        echohl NONE
-    finally
+ "   catch
+ "       echohl Error
+ "       echom v:errmsg
+ "       echohl NONE
+ "   finally
         if bufnr == bufnr('%')
             call setpos('.', pos)
         endif
-    endtry
+ "   endtry
     return 0
 endf
 
@@ -282,6 +326,49 @@ function! s:GetDef(ft) "{{{3
     endif
 endf
 
+function! s:DeleteTempFile()
+    if exists('b:tmpfile') && b:tmpfile != '' && file_readable(b:tmpfile)
+       call system('rm '.b:tmpfile)
+    endif
+endf
+
+function! s:MakeTempFile()
+    call s:DeleteTempFile()
+    let b:tmpfile = system('mktemp')
+    let b:tmpfile = substitute(b:tmpfile,'\n','','g')
+endf
+
+function! s:SafeGetCode()
+    " this code dont cause a redraw :
+    let code= ""
+    for line_content in getline(1,"$")
+    let code .= line_content."\n"
+    endfor
+    return code[:-2] " remonve the last \n (added by the loop)
+endf
+
+function! checksyntax#LiveCheck(reload)
+    let def = s:GetDef(&filetype .',auto')
+    if empty(def)
+      let def = s:GetDef(&filetype)
+    endif
+    if empty(def)
+        return
+    endif
+    let live = get(def, 'live', 0)
+    if live
+      if a:reload
+        if !exists('b:tmpfile') || !file_readable(b:tmpfile)
+          let b:tmpfile = ""
+          let b:lastchanges = 0
+        else
+          "echom "MARK"
+          "call phpErrorMarker#showquickfix()
+        endif
+      endif
+      call checksyntax#Check(0)
+    endif
+endf
 
 " :def: function! checksyntax#Check(manually, ?bang='', ?type=&ft)
 function! checksyntax#Check(manually, ...)
@@ -300,13 +387,24 @@ function! checksyntax#Check(manually, ...)
     endif
     let auto = get(def, 'auto', 0)
     " TLogVAR auto
-    if !(a:manually || auto)
+    let live = get(def, 'live', 0)
+    " TLogVAR live
+    if !(a:manually || auto || live)
         return
     endif
-    if &modified
-        echom "Buffer was modified. Please save it before calling :CheckSyntax."
-        return
-    end
+"    if &modified
+"        echom "Buffer was modified. Please save it before calling :CheckSyntax."
+"        return
+"    end
+
+    if !exists('b:lastchanges') || a:manually
+        let b:lastchanges = b:changedtick
+    else
+        if b:lastchanges == b:changedtick
+          return
+        endif
+    endif
+
     " TLogVAR &makeprg, &l:makeprg, &g:makeprg, &errorformat
     exec get(def, 'prepare', '')
     if s:Make(def)
@@ -314,6 +412,7 @@ function! checksyntax#Check(manually, ...)
         let okrx   = get(def, 'okrx', g:checksyntax#okrx)
         let qfl = getqflist()
         let bnr = bufnr('%')
+        let wnr = winnr()
         call filter(qfl, 's:FilterItem(def, v:val)')
         call map(qfl, 's:CompleteItem(def, v:val)')
         call setqflist(qfl)
@@ -323,7 +422,10 @@ function! checksyntax#Check(manually, ...)
         else
             call CheckSyntaxFail(a:manually)
         endif
-        redraw!
+        execute wnr."wincmd w"
+        if ! live
+          redraw!
+        endif
     endif
 endf
 
