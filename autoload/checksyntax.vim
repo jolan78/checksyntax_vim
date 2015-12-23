@@ -328,14 +328,13 @@ endf
 
 function! s:DeleteTempFile()
     if exists('b:tmpfile') && b:tmpfile != '' && file_readable(b:tmpfile)
-       call system('rm '.b:tmpfile)
+       call delete(b:tmpfile)
     endif
 endf
 
 function! s:MakeTempFile()
     call s:DeleteTempFile()
-    let b:tmpfile = system('mktemp')
-    let b:tmpfile = substitute(b:tmpfile,'\n','','g')
+    let b:tmpfile = tempname()
 endf
 
 function! s:SafeGetCode()
