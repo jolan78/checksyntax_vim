@@ -45,7 +45,7 @@ if !exists('g:checksyntax.php')
     let g:checksyntax['php'] = {
                 \ 'auto': 1,
                 \ 'live': 1,
-                \ 'cmd': 'php -l -f',
+                \ 'cmd': 'php -l -n -f',
                 \ 'efm': '%*[^:]: %m in %f on line %l',
                 \ 'okrx': 'No syntax errors detected in ',
                 \ 'alt': 'phpp'
